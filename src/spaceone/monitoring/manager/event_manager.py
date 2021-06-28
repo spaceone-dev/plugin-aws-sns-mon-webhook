@@ -29,40 +29,6 @@ class EventManager(BaseManager):
         else:
 
             try:
-                """
-                {
-                    "OldStateValue": "ALARM",
-                    "Trigger": {
-                        "StatisticType": "Statistic",
-                        "EvaluationPeriods": 1,
-                        "Period": 300,
-                        "MetricName": "CPUUtilization",
-                        "Namespace": "AWS/EC2",
-                        "TreatMissingData": "- TreatMissingData:                    missing",
-                        "Statistic": "MAXIMUM",
-                        "Unit": "None",
-                        "EvaluateLowSampleCountPercentile": "",
-                        "Dimensions": [
-                            {
-                                "value": "i-0b79aaf581d5389d5",
-                                "name": "InstanceId"
-                            }
-                        ],
-                        "ComparisonOperator": "GreaterThanThreshold",
-                        "Threshold": 50.0
-                    },
-                    "AlarmName": "cpu corek8s ",
-                    "Region": "AsiaPacific (Seoul)",
-                    "AWSAccountId": "257706363616",
-                    "NewStateValue": "OK",
-                    "AlarmDescription": "cpucorek8s",
-                    "AlarmArn": "arn:aws:cloudwatch:ap-northeast-2:257706363616:alarm:cpucorek8s",
-                    "NewStateReason": "Threshold Crossed: 1 out of the last 1 datapoints [9.395 (10/06/21 04:23:00)] was not greater than the threshold (50.0) (minimum 1 datapoint for ALARM -> OK transition).",
-                    "StateChangeTime": "2021-06-10T04:28:46.868+0000"
-                }
-                    acc_id > resource_id > alarm_name > date_time 
-                """
-
                 if 'Message' in raw_data:
                     message = raw_data.get('Message', '{}')
                     raw_message = self._get_json_message(message)
@@ -76,7 +42,7 @@ class EventManager(BaseManager):
                 region = raw_data.get('Region', '')
                 if dimensions is not None:
                     for dimension in dimensions:
-                        event_resource = self._get_resource_for_event(dimension, {}, triggered_data, region)
+                        event_resource = self._get_resource_for_event(dimension, {}, triggered_data, None)
                         event_vo = {
                             'event_key': self._get_event_key(raw_data, dimension.get('value')),
                             'event_type': self._get_event_type(raw_data),
@@ -96,9 +62,10 @@ class EventManager(BaseManager):
                         metric_stat = metric.get('MetricStat', {})
                         inner_metric = metric_stat.get('Metric', {})
                         inner_dimensions = inner_metric.get('Dimensions')
+                        name_space = inner_metric.get('Namespace')
                         if inner_dimensions is not None:
                             for in_dimension in inner_dimensions:
-                                event_resource = self._get_resource_for_event(in_dimension, {}, triggered_data, region)
+                                event_resource = self._get_resource_for_event(in_dimension, {}, triggered_data, name_space)
                                 event_vo = {
                                     'event_key': self._get_event_key(raw_data, in_dimension.get('value')),
                                     'event_type': self._get_event_type(raw_data),
@@ -114,7 +81,6 @@ class EventManager(BaseManager):
                                 _LOGGER.debug(f'[EventManager] parse Event : {event_vo}')
                                 self._evaluate_parsing_data(event_vo, default_parsed_data)
 
-
             except Exception as e:
                 generated = utils.generate_id('aws-sns', 4)
                 hash_object = hashlib.md5(generated.encode())
@@ -123,7 +89,7 @@ class EventManager(BaseManager):
 
                 event_vo = {
                     'event_key': md5_hash,
-                    'event_type': 'ALERT',
+                    'event_type': 'ERROR',
                     'severity': 'CRITICAL',
                     'resource': {},
                     'description': error_message,
@@ -221,23 +187,24 @@ class EventManager(BaseManager):
         return event_resource
 
     @staticmethod
-    def _get_resource_for_event(dimension, event_resource, triggered_data, region):
+    def _get_resource_for_event(dimension, event_resource, triggered_data, name_space):
         resource_type = triggered_data.get('Namespace', '')
-        resource_id = dimension.get('value', '')
         resource_name = ''
-        if region != '':
-            resource_name = f'[{region}]'
-        if resource_type != '':
-            resource_name = resource_name+f':[{resource_type}]'
+        resource_id = dimension.get('value', '')
 
-        event_resource.update({
-            'name': resource_name+f': {resource_id}',
-            'resource_id': resource_id,
-        })
+        if not resource_type and name_space is not None:
+            resource_type = name_space
+
         if resource_type != '':
+            resource_name = resource_name+f'[{resource_type}]'
             event_resource.update({
                 'resource_type': resource_type
             })
+
+        event_resource.update({
+            'name': resource_name+f' {resource_id}',
+            'resource_id': resource_id,
+        })
 
         return event_resource
 
@@ -245,7 +212,8 @@ class EventManager(BaseManager):
     def _get_alarm_title(raw_data):
         alarm_name = raw_data.get('AlarmName', '')
         region = raw_data.get('Region', '')
-        return f'{alarm_name}' if not region else f'[{region}]: {alarm_name}'
+        #return f'{alarm_name}' if not region else f'[{region}]: {alarm_name}'
+        return f'{alarm_name}'
 
     @staticmethod
     def _get_additional_info(raw_data):
